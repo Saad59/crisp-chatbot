@@ -12,28 +12,37 @@ CRISP_KEY = os.getenv("CRISP_KEY")
 
 @app.get("/")
 def root():
-    return {"message": "Crisp Chatbot is running 🎉"}
+    return {"message": "✅ Crisp Chatbot is running"}
 
 @app.post("/crisp-webhook")
 async def crisp_webhook(request: Request):
     try:
         body = await request.json()
-        message = body["data"]["content"]
-        session_id = body["data"]["session_id"]
-        email = body["data"]["user"]["email"]
+        data = body.get("data", {})
+        message = data.get("content")
+        session_id = data.get("session_id")
+        user_info = data.get("user", {})
+        email = user_info.get("email", "unknown")
 
         print(f"📩 Message from {email}: {message}")
 
+        # Fallback to Slack if user requests human support
         if "human" in message.lower():
             send_slack_alert(email, message)
             return {"ok": True, "note": "Sent to human support"}
 
+        # Get AI reply
         reply = get_ai_reply(message)
+
+        # If OpenRouter failed, escalate to Slack
+        if "sorry" in reply.lower():
+            send_slack_alert(email, message)
+
         send_crisp_reply(session_id, reply)
         return {"ok": True, "note": "Replied via AI"}
-    
+
     except Exception as e:
-        print("❌ Error in webhook:", e)
+        print("❌ Error in /crisp-webhook:", e)
         return {"ok": False, "error": str(e)}
 
 def get_ai_reply(user_input):
@@ -51,7 +60,7 @@ def get_ai_reply(user_input):
         response.raise_for_status()
         return response.json()["choices"][0]["message"]["content"]
     except Exception as e:
-        print("❌ Error in OpenRouter API:", e)
+        print("❌ OpenRouter API failed:", e)
         return "Sorry, I'm having trouble answering right now."
 
 def send_crisp_reply(session_id, reply):
@@ -70,10 +79,10 @@ def send_crisp_reply(session_id, reply):
         print("❌ Failed to send reply to Crisp:", e)
 
 def send_slack_alert(email, message):
-    text = f"*🆘 User requesting human support!*\nEmail: `{email}`\nMessage: `{message}`"
+    text = f"*🆘 Human Support Requested*\n• Email: `{email}`\n• Message: `{message}`"
     try:
         r = requests.post(SLACK_WEBHOOK_URL, json={"text": text})
         r.raise_for_status()
-        print("✅ Alert sent to Slack")
+        print("✅ Slack alert sent")
     except Exception as e:
         print("❌ Failed to send Slack alert:", e)
