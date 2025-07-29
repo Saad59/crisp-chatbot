@@ -4,6 +4,12 @@ import requests
 import base64
 import os
 from dotenv import load_dotenv
+from time import time
+
+# In-memory store to avoid duplicate replies
+last_user_message = {}  # session_id -> (content, timestamp)
+DEDUPLICATION_TIMEOUT = 10  # seconds (adjust as needed)
+
 
 load_dotenv()
 
@@ -113,6 +119,18 @@ async def handle_crisp_webhook(request: Request):
         return {"ok": False, "error": "Invalid payload"}
 
     print(f"[User] {user_message} (session: {session_id})")
+
+    # ✅ Deduplication check
+    now = time()
+    last_message, last_time = last_user_message.get(session_id, ("", 0))
+
+    if user_message == last_message and (now - last_time) < DEDUPLICATION_TIMEOUT:
+        print("[Deduplication] Duplicate message ignored.")
+        return {"ok": True, "note": "Duplicate message ignored"}
+
+    # ✅ Update cache
+    last_user_message[session_id] = (user_message, now)
+
 
     reply = get_ai_reply(user_message)
 
