@@ -19,25 +19,26 @@ async def crisp_webhook(request: Request):
     try:
         body = await request.json()
         data = body.get("data", {})
-        message = data.get("content")
+        message = data.get("content", "")
         session_id = data.get("session_id")
         user_info = data.get("user", {})
         email = user_info.get("email", "unknown")
 
         print(f"📩 Message from {email}: {message}")
 
-        # Fallback to Slack if user requests human support
-        if "human" in message.lower():
-            send_slack_alert(email, message)
+        # Detect request for human support
+        if any(kw in message.lower() for kw in ["human", "agent", "support", "talk to person"]):
+            send_slack_alert(email, message, manual=True)
             return {"ok": True, "note": "Sent to human support"}
 
         # Get AI reply
         reply = get_ai_reply(message)
 
-        # If OpenRouter failed, escalate to Slack
-        if "sorry" in reply.lower():
-            send_slack_alert(email, message)
+        # Fallback if reply is empty or not useful
+        if not reply or "sorry" in reply.lower() or "trouble" in reply.lower():
+            send_slack_alert(email, message, manual=False)
 
+        # Send reply to Crisp
         send_crisp_reply(session_id, reply)
         return {"ok": True, "note": "Replied via AI"}
 
@@ -78,8 +79,11 @@ def send_crisp_reply(session_id, reply):
     except Exception as e:
         print("❌ Failed to send reply to Crisp:", e)
 
-def send_slack_alert(email, message):
-    text = f"*🆘 Human Support Requested*\n• Email: `{email}`\n• Message: `{message}`"
+def send_slack_alert(email, message, manual=False):
+    if manual:
+        text = f"*🆘 Human Support Requested*\n• Email: `{email}`\n• Message: `{message}`"
+    else:
+        text = f"*⚠️ AI Failed or Response Unclear*\n• Email: `{email}`\n• Message: `{message}`"
     try:
         r = requests.post(SLACK_WEBHOOK_URL, json={"text": text})
         r.raise_for_status()
