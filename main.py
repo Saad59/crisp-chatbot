@@ -34,7 +34,7 @@ async def crisp_webhook(request: Request):
         # Get AI reply
         reply = get_ai_reply(message)
 
-        # Fallback if reply is empty or not useful
+        # If AI fails or gives bad reply, alert human
         if not reply or "sorry" in reply.lower() or "trouble" in reply.lower():
             send_slack_alert(email, message, manual=False)
 
