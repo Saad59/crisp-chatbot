@@ -101,7 +101,7 @@ async def handle_crisp_webhook(request: Request):
     # ✅ Filter to only respond to user messages
     event_type = body.get("event")
     message_from = body.get("data", {}).get("from")
-    if event_type != "message:received" or message_from != "user":
+    if event_type != "message:send" or message_from != "user":
         print(f"Ignored: event={event_type}, from={message_from}")
         return {"ok": True, "note": "Ignored non-user message"}
 
@@ -125,3 +125,4 @@ async def handle_crisp_webhook(request: Request):
         send_slack_alert(f"User said: \"{user_message}\"\nSession: {session_id}")
         send_crisp_message(session_id, "Let me connect you to a support person 🔄")
         return { "ok": True, "note": "Sent to human support" }
+
