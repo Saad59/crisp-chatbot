@@ -27,12 +27,12 @@ CRISP_TOKEN_KEY = os.getenv("CRISP_TOKEN_KEY")
 
 # PurifyX context
 PURIFYX_CONTEXT = """
-PurifyX is a powerful lead generation and outreach platform currently in Beta.
+PurifyX is a powerful lead generation ,Data Enrichment and outreach platform currently in Beta.
 
 🔹 Features:
 – Find verified leads
-– Enrich contact data (firmographic, social, etc.)
-– Automate AI-personalized cold email sequences
+– Enrich contact data (emails, phone, social, etc.)
+– Automate AI-personalized cold email sequences (Coming Soon)
 
 🔹 Key links:
 – Website: https://www.purifyx.ai
@@ -42,10 +42,11 @@ PurifyX is a powerful lead generation and outreach platform currently in Beta.
 – Privacy Policy: https://www.purifyx.ai/privacy-policy
 """
 
-# Memory for deduplication and fallback
+# Memory
 last_user_message = {}
 DEDUPLICATION_TIMEOUT = 10
 awaiting_issue = set()
+fallback_sessions = set()
 
 # --- Gemini Integration ---
 def get_ai_reply(user_message: str):
@@ -55,17 +56,20 @@ def get_ai_reply(user_message: str):
 
     url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={GEMINI_API_KEY}"
     headers = { "Content-Type": "application/json" }
+
     prompt = {
         "contents": [
             {
                 "parts": [
                     {
-                        "text": f"""You are an AI customer support agent for PurifyX.
+                        "text": f"""You are an AI customer support assistant for PurifyX.
 
 Context:
 {PURIFYX_CONTEXT}
 
-If the question is unrelated, unclear, or too complex to handle, reply with: "HUMAN_SUPPORT".
+If the user asks to speak with support or says anything like "contact support", "talk to human", or "need help", do not try to answer. Instead, just reply with: HUMAN_SUPPORT.
+
+Otherwise, help them with their question.
 
 User: {user_message}
 """
@@ -115,12 +119,16 @@ def send_crisp_message(session_id: str, message: str):
         return False
 
 # --- Slack Integration ---
-def send_slack_alert(message: str):
+def send_slack_alert(session_id: str, user_email: str, message: str):
     if not SLACK_WEBHOOK_URL:
         print("[SLACK] Webhook missing.")
         return
     try:
-        requests.post(SLACK_WEBHOOK_URL, json={ "text": message })
+        payload = {
+            "text": f"🙋 *Support Request*\nSession ID: `{session_id}`\nEmail: `{user_email}`\nIssue: {message}"
+        }
+        requests.post(SLACK_WEBHOOK_URL, json=payload)
+        print("[SLACK] Alert sent.")
     except Exception as e:
         print("[SLACK] Error:", e)
 
@@ -130,7 +138,6 @@ async def handle_crisp_webhook(request: Request):
     body = await request.json()
     print("[Webhook] Payload received")
 
-    # Validate message type
     event = body.get("event")
     data = body.get("data", {})
     message_from = data.get("from")
@@ -155,31 +162,31 @@ async def handle_crisp_webhook(request: Request):
         return {"ok": True, "note": "Duplicate ignored"}
     last_user_message[session_id] = (user_message, now)
 
-    # If user was asked to describe their issue
+    # Awaiting issue
     if session_id in awaiting_issue:
         awaiting_issue.remove(session_id)
-
-        # Escalate to Slack with issue + user email
+        fallback_sessions.add(session_id)
         send_crisp_message(session_id, "Thanks! A human support agent will assist you shortly 🔄")
-        slack_msg = f"🙋 *User requested support*\nSession ID: `{session_id}`\nEmail: `{user_email}`\nIssue: {user_message}"
-        send_slack_alert(slack_msg)
-        return {"ok": True, "note": "Sent to Slack"}
+        send_slack_alert(session_id, user_email, user_message)
+        return {"ok": True, "note": "Escalated to human"}
 
-    # Try AI response
+    # Already escalated
+    if session_id in fallback_sessions:
+        print("[Fallback] Session already escalated.")
+        return {"ok": True, "note": "Already escalated"}
+
+    # Try Gemini
     reply = get_ai_reply(user_message)
 
     if reply == "HUMAN_SUPPORT":
-        # Ask user to describe issue
         awaiting_issue.add(session_id)
         send_crisp_message(session_id, "Can you please describe the issue you're facing?")
-        return {"ok": True, "note": "Asked user for support issue"}
-
-    if reply and reply.strip():
+        return {"ok": True, "note": "Asked for issue"}
+    elif reply and reply.strip():
         send_crisp_message(session_id, reply)
-        return {"ok": True, "note": "Replied via AI"}
-
-    # AI failed, escalate
-    send_crisp_message(session_id, "Let me connect you to a support person 🔄")
-    slack_msg = f"⚠️ *AI fallback triggered*\nSession: `{session_id}`\nEmail: `{user_email}`\nMessage: {user_message}"
-    send_slack_alert(slack_msg)
-    return {"ok": True, "note": "AI fallback"}
+        return {"ok": True, "note": "Answered via AI"}
+    else:
+        fallback_sessions.add(session_id)
+        send_crisp_message(session_id, "Let me connect you to a support person 🔄")
+        send_slack_alert(session_id, user_email, user_message)
+        return {"ok": True, "note": "Fallback triggered"}
