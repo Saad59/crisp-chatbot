@@ -5,10 +5,13 @@ import base64
 import os
 from dotenv import load_dotenv
 from time import time
+from models import MsgPayload
+from database import msg_payloads_collection
 
 load_dotenv()
 
 app = FastAPI()
+messages_list: dict[int, MsgPayload] = {}
 
 app.add_middleware(
     CORSMiddleware,
@@ -41,6 +44,52 @@ PurifyX is a powerful lead generation ,Data Enrichment and outreach platform cur
 – Terms: https://www.purifyx.ai/terms
 – Privacy Policy: https://www.purifyx.ai/privacy-policy
 """
+
+
+@app.get("/")
+def root() -> dict[str, str]:
+    return {"message": "Welcome to Crisp Chatbot"}
+
+# About page route
+@app.get("/about")
+def about() -> dict[str, str]:
+    return {"message": "This is the about page."}
+
+
+# Route to add a message
+@app.post("/messages/{msg_name}/")
+def add_msg(msg_name: str) -> dict[str, MsgPayload]:
+    # Generate an ID for the item based on the highest ID in the messages_list
+    msg_id = max(messages_list.keys()) + 1 if messages_list else 0
+    messages_list[msg_id] = MsgPayload(msg_id=msg_id, msg_name=msg_name)
+
+    return {"message": messages_list[msg_id]}
+
+
+# Route to list all messages
+@app.get("/messages")
+def message_items() -> dict[str, dict[int, MsgPayload]]:
+    return {"messages:": messages_list}
+
+
+@app.get("/mongo-status")
+def mongo_status():
+    try:
+        stats = db.command("ping")
+        return {"ok": True, "status": stats}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+
+@app.post("/chat")
+def chat(payload: MsgPayload):
+    # Convert payload to dict and save to MongoDB
+    payload_dict = payload.dict()
+    msg_payloads_collection.insert_one(payload_dict)
+    
+    return {
+        "reply": f"Received message: '{payload.content}' from {payload.user_type}"
+    }
 
 # Memory
 last_user_message = {}
