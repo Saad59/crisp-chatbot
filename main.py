@@ -47,21 +47,21 @@ PurifyX is a powerful lead generation ,Data Enrichment and outreach platform cur
 """
 
 @app.get("/")
-def root() -> dict[str, str]:
+def root():
     return {"message": "Welcome to Crisp Chatbot"}
 
 @app.get("/about")
-def about() -> dict[str, str]:
+def about():
     return {"message": "This is the about page."}
 
 @app.post("/messages/{msg_name}/")
-def add_msg(msg_name: str) -> dict[str, MsgPayload]:
+def add_msg(msg_name: str):
     msg_id = max(messages_list.keys()) + 1 if messages_list else 0
     messages_list[msg_id] = MsgPayload(msg_id=msg_id, msg_name=msg_name)
     return {"message": messages_list[msg_id]}
 
 @app.get("/messages")
-def message_items() -> dict[str, dict[int, MsgPayload]]:
+def message_items():
     return {"messages:": messages_list}
 
 @app.post("/chat")
@@ -77,11 +77,13 @@ awaiting_issue = set()
 fallback_sessions = set()
 session_emails = {}
 
-# Intent matcher
 def match_intent(message: str, target: str) -> bool:
     return fuzz.partial_ratio(message.lower(), target.lower()) > 85
 
-# Gemini
+def is_greeting(message: str) -> bool:
+    greetings = ["hi", "hello", "hey", "hy", "yo", "sup"]
+    return any(fuzz.ratio(message.lower(), g) > 85 for g in greetings)
+
 def get_ai_reply(user_message: str):
     if not GEMINI_API_KEY:
         print("[GEMINI] API key missing.")
@@ -100,9 +102,9 @@ def get_ai_reply(user_message: str):
 Context:
 {PURIFYX_CONTEXT}
 
-If the user asks to speak with support or says anything like \"contact support\", \"talk to human\", or \"need help\", do not try to answer. Instead, just reply with: HUMAN_SUPPORT.
+If the user asks to speak with support or says anything like "contact support", "talk to human", or "need help", do not try to answer. Instead, just reply with: HUMAN_SUPPORT.
 
-If the user previously asked for support but says something like \"want to talk to you\", then resume answering normally.
+If the user previously asked for support but says something like "want to talk to you", then resume answering normally.
 
 User: {user_message}
 """
@@ -122,8 +124,6 @@ User: {user_message}
     except Exception as e:
         print("[GEMINI] Request failed:", e)
     return None
-
-# Crisp
 
 def send_crisp_message(session_id: str, message: str):
     url = f"https://api.crisp.chat/v1/website/{CRISP_WEBSITE_ID}/conversation/{session_id}/message"
@@ -151,8 +151,6 @@ def send_crisp_message(session_id: str, message: str):
         print("[CRISP] Send error:", e)
         return False
 
-# Slack
-
 def send_slack_alert(session_id: str, user_email: str, message: str):
     if not SLACK_WEBHOOK_URL:
         print("[SLACK] Webhook missing.")
@@ -166,8 +164,6 @@ def send_slack_alert(session_id: str, user_email: str, message: str):
     except Exception as e:
         print("[SLACK] Error:", e)
 
-# Crisp Webhook
-
 @app.post("/crisp-webhook")
 async def handle_crisp_webhook(request: Request):
     body = await request.json()
@@ -178,7 +174,6 @@ async def handle_crisp_webhook(request: Request):
     message_from = data.get("from")
     session_id = data.get("session_id")
 
-    # Handle early email capture
     if event in ["session:set_email", "website:visit"]:
         email = data.get("email") or data.get("visitor", {}).get("email")
         if session_id and email:
@@ -212,6 +207,29 @@ async def handle_crisp_webhook(request: Request):
         return {"ok": True, "note": "Duplicate ignored"}
     last_user_message[session_id] = (user_message, now)
 
+    # Resume bot interaction
+    if match_intent(user_message, "talk to you") or match_intent(user_message, "want to talk to bot") or match_intent(user_message, "keep talking to you"):
+        fallback_sessions.discard(session_id)
+        send_crisp_message(session_id, "I’m back 😊 What would you like help with now?")
+        return {"ok": True, "note": "User returned to AI"}
+
+    # Greetings
+    if is_greeting(user_message):
+        send_crisp_message(session_id, "Hi there 👋 I’m your AI assistant at PurifyX. What can I help you with today?")
+        return {"ok": True, "note": "Greeting handled"}
+
+    # Escalated already
+    if session_id in fallback_sessions:
+        print("[Fallback] Already escalated")
+        return {"ok": True, "note": "Already escalated"}
+
+    # Support detection
+    if match_intent(user_message, "support") or match_intent(user_message, "contact") or match_intent(user_message, "help") or "credits" in user_message.lower():
+        awaiting_issue.add(session_id)
+        send_crisp_message(session_id, "Got it! Can you quickly describe the issue with credits?")
+        return {"ok": True, "note": "Support intent detected"}
+
+    # Awaiting issue follow-up
     if session_id in awaiting_issue:
         awaiting_issue.remove(session_id)
         fallback_sessions.add(session_id)
@@ -219,27 +237,13 @@ async def handle_crisp_webhook(request: Request):
         send_slack_alert(session_id, user_email, user_message)
         return {"ok": True, "note": "Escalated to human"}
 
-    if session_id in fallback_sessions:
-        print("[Fallback] Already escalated")
-        return {"ok": True, "note": "Already escalated"}
-
-    if match_intent(user_message, "support") or match_intent(user_message, "contact") or match_intent(user_message, "help"):
-        awaiting_issue.add(session_id)
-        send_crisp_message(session_id, "Can you please describe the issue you're facing?")
-        return {"ok": True, "note": "Support intent detected"}
-
-    if match_intent(user_message, "talk to you") or match_intent(user_message, "want to talk to bot"):
-        fallback_sessions.discard(session_id)
-        send_crisp_message(session_id, "I’m back 😊 What would you like help with now?")
-        return {"ok": True, "note": "User returned to AI"}
-
     reply = get_ai_reply(user_message)
 
     if reply == "HUMAN_SUPPORT":
         awaiting_issue.add(session_id)
         send_crisp_message(session_id, "Can you please describe the issue you're facing?")
         return {"ok": True, "note": "Asked for issue"}
-    elif reply and reply.strip():
+    elif reply:
         send_crisp_message(session_id, reply)
         return {"ok": True, "note": "Answered via AI"}
     else:
