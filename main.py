@@ -1,6 +1,7 @@
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 import requests
+import base64
 import os
 from dotenv import load_dotenv
 
@@ -28,20 +29,26 @@ CRISP_TOKEN_KEY = os.getenv("CRISP_TOKEN_KEY")
 def send_crisp_message(session_id: str, message: str):
     url = f"https://api.crisp.chat/v1/website/{CRISP_WEBSITE_ID}/conversation/{session_id}/message"
 
+    # Create Basic Auth header
+    auth_token = f"{CRISP_TOKEN_ID}:{CRISP_TOKEN_KEY}"
+    encoded_token = base64.b64encode(auth_token.encode()).decode()
+
     headers = {
-        "Authorization": f"Basic {CRISP_TOKEN_ID}:{CRISP_TOKEN_KEY}",
+        "Authorization": f"Basic {encoded_token}",
+        "X-Crisp-Tier": "plugin",
         "Content-Type": "application/json"
     }
+
     payload = {
         "type": "text",
         "from": "operator",
         "origin": "chat",
         "content": message
     }
+
     response = requests.post(url, headers=headers, json=payload)
     print(f"[CRISP] Reply sent: {response.status_code} - {response.text}")
     return response.status_code == 200
-
 # Alert fallback to Slack
 def send_slack_alert(message: str):
     if not SLACK_WEBHOOK_URL:
