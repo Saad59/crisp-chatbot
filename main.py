@@ -25,11 +25,9 @@ CRISP_WEBSITE_ID = os.getenv("CRISP_WEBSITE_ID")
 CRISP_TOKEN_ID = os.getenv("CRISP_TOKEN_ID")
 CRISP_TOKEN_KEY = os.getenv("CRISP_TOKEN_KEY")
 
-# Send a message via Crisp
+# Send message via Crisp
 def send_crisp_message(session_id: str, message: str):
     url = f"https://api.crisp.chat/v1/website/{CRISP_WEBSITE_ID}/conversation/{session_id}/message"
-
-    # Create Basic Auth header
     auth_token = f"{CRISP_TOKEN_ID}:{CRISP_TOKEN_KEY}"
     encoded_token = base64.b64encode(auth_token.encode()).decode()
 
@@ -49,7 +47,8 @@ def send_crisp_message(session_id: str, message: str):
     response = requests.post(url, headers=headers, json=payload)
     print(f"[CRISP] Reply sent: {response.status_code} - {response.text}")
     return response.status_code == 200
-# Alert fallback to Slack
+
+# Fallback alert
 def send_slack_alert(message: str):
     if not SLACK_WEBHOOK_URL:
         print("[SLACK] Webhook URL not set")
@@ -61,7 +60,7 @@ def send_slack_alert(message: str):
     except Exception as e:
         print("[SLACK] Failed to send alert:", e)
 
-# Gemini AI call
+# Gemini AI response
 def get_ai_reply(user_message: str):
     if not GEMINI_API_KEY:
         print("[GEMINI] API key not set")
@@ -87,7 +86,7 @@ def get_ai_reply(user_message: str):
         try:
             return response.json()['candidates'][0]['content']['parts'][0]['text']
         except Exception as e:
-            print("[GEMINI] Unexpected response structure:", e)
+            print("[GEMINI] Unexpected response format:", e)
     else:
         print(f"[GEMINI] Error: {response.status_code} - {response.text}")
 
@@ -98,6 +97,13 @@ def get_ai_reply(user_message: str):
 async def handle_crisp_webhook(request: Request):
     body = await request.json()
     print("[Webhook] Payload received")
+
+    # ✅ Filter to only respond to user messages
+    event_type = body.get("event")
+    message_from = body.get("data", {}).get("from")
+    if event_type != "message:received" or message_from != "user":
+        print(f"Ignored: event={event_type}, from={message_from}")
+        return {"ok": True, "note": "Ignored non-user message"}
 
     try:
         user_message = body["data"]["content"]
@@ -110,12 +116,12 @@ async def handle_crisp_webhook(request: Request):
 
     reply = get_ai_reply(user_message)
 
-    if reply:
+    if reply and reply.strip():
         print("[AI] Reply:", reply)
         send_crisp_message(session_id, reply)
         return { "ok": True, "note": "Replied via Gemini AI" }
     else:
-        print("[AI] No reply generated. Sending to human support...")
+        print("[AI] No valid reply generated. Sending to human support...")
         send_slack_alert(f"User said: \"{user_message}\"\nSession: {session_id}")
         send_crisp_message(session_id, "Let me connect you to a support person 🔄")
         return { "ok": True, "note": "Sent to human support" }
