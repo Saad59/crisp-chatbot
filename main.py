@@ -26,7 +26,8 @@ CRISP_TOKEN_KEY = os.getenv("CRISP_TOKEN_KEY")
 
 # Send a message via Crisp
 def send_crisp_message(session_id: str, message: str):
-    url = f"https://api.crisp.chat/v1/webhooks/session/{session_id}/message/send"
+    url = f"https://api.crisp.chat/v1/website/{CRISP_WEBSITE_ID}/conversation/{session_id}/message"
+
     headers = {
         "Authorization": f"Basic {CRISP_TOKEN_ID}:{CRISP_TOKEN_KEY}",
         "Content-Type": "application/json"
