@@ -14,15 +14,18 @@ RUN apt-get update && apt-get install -y \
 # Set working directory
 WORKDIR /app
 
-# Copy project files
-COPY . /app
+# Copy requirements first for better caching
+COPY requirements.txt /app/
 
 # Install Python dependencies
-RUN pip install --upgrade pip
-RUN pip install -r requirements.txt
+RUN pip install --upgrade pip && \
+    pip install -r requirements.txt
 
-# Expose port (optional but helpful)
+# Copy the rest of the application code
+COPY . /app
+
+# Expose port
 EXPOSE 8000
 
-# Start FastAPI server using the PORT provided by Railway
+# Run the FastAPI app
 CMD ["sh", "-c", "uvicorn main:app --host 0.0.0.0 --port $PORT"]
