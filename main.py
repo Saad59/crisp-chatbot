@@ -22,12 +22,14 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Env vars
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 SLACK_WEBHOOK_URL = os.getenv("SLACK_WEBHOOK_URL")
 CRISP_WEBSITE_ID = os.getenv("CRISP_WEBSITE_ID")
 CRISP_TOKEN_ID = os.getenv("CRISP_TOKEN_ID")
 CRISP_TOKEN_KEY = os.getenv("CRISP_TOKEN_KEY")
 
+# PurifyX context
 PURIFYX_CONTEXT = """
 PurifyX is a powerful lead generation ,Data Enrichment and outreach platform currently in Beta.
 
@@ -79,75 +81,121 @@ session_emails = {}
 def match_intent(message: str, target: str) -> bool:
     return fuzz.partial_ratio(message.lower(), target.lower()) > 85
 
+# Gemini
 def get_ai_reply(user_message: str):
     if not GEMINI_API_KEY:
+        print("[GEMINI] API key missing.")
         return None
+
     url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={GEMINI_API_KEY}"
     headers = {"Content-Type": "application/json"}
+
     prompt = {
         "contents": [
-            {"parts": [{"text": f"""You are an AI customer support assistant for PurifyX.
+            {
+                "parts": [
+                    {
+                        "text": f"""You are an AI customer support assistant for PurifyX.
 
 Context:
 {PURIFYX_CONTEXT}
 
 If the user asks to speak with support or says anything like \"contact support\", \"talk to human\", or \"need help\", do not try to answer. Instead, just reply with: HUMAN_SUPPORT.
 
-Otherwise, help them with their question.
+If the user previously asked for support but says something like \"want to talk to you\", then resume answering normally.
 
-User: {user_message}"""}]}
+User: {user_message}
+"""
+                    }
+                ]
+            }
         ]
     }
+
     try:
         response = requests.post(url, headers=headers, json=prompt)
         if response.status_code == 200:
             data = response.json()
             return data["candidates"][0]["content"]["parts"][0]["text"].strip()
-    except Exception:
-        pass
+        else:
+            print(f"[GEMINI] Error {response.status_code}: {response.text}")
+    except Exception as e:
+        print("[GEMINI] Request failed:", e)
     return None
+
+# Crisp
 
 def send_crisp_message(session_id: str, message: str):
     url = f"https://api.crisp.chat/v1/website/{CRISP_WEBSITE_ID}/conversation/{session_id}/message"
-    token = base64.b64encode(f"{CRISP_TOKEN_ID}:{CRISP_TOKEN_KEY}".encode()).decode()
+    auth_token = f"{CRISP_TOKEN_ID}:{CRISP_TOKEN_KEY}"
+    encoded_token = base64.b64encode(auth_token.encode()).decode()
+
     headers = {
-        "Authorization": f"Basic {token}",
+        "Authorization": f"Basic {encoded_token}",
         "X-Crisp-Tier": "plugin",
         "Content-Type": "application/json"
     }
-    payload = {"type": "text", "from": "operator", "origin": "chat", "content": message}
+
+    payload = {
+        "type": "text",
+        "from": "operator",
+        "origin": "chat",
+        "content": message
+    }
+
     try:
-        return requests.post(url, headers=headers, json=payload).status_code == 200
-    except Exception:
+        res = requests.post(url, headers=headers, json=payload)
+        print(f"[CRISP] Sent: {res.status_code}")
+        return res.status_code == 200
+    except Exception as e:
+        print("[CRISP] Send error:", e)
         return False
 
+# Slack
+
 def send_slack_alert(session_id: str, user_email: str, message: str):
-    if SLACK_WEBHOOK_URL:
+    if not SLACK_WEBHOOK_URL:
+        print("[SLACK] Webhook missing.")
+        return
+    try:
         payload = {
-            "text": f":raising_hand: *Support Request*\nSession ID: `{session_id}`\nEmail: `{user_email}`\nIssue: {message}"
+            "text": f"🙋 *Support Request*\nSession ID: `{session_id}`\nEmail: `{user_email}`\nIssue: {message}"
         }
-        try:
-            requests.post(SLACK_WEBHOOK_URL, json=payload)
-        except Exception:
-            pass
+        requests.post(SLACK_WEBHOOK_URL, json=payload)
+        print("[SLACK] Alert sent.")
+    except Exception as e:
+        print("[SLACK] Error:", e)
+
+# Crisp Webhook
 
 @app.post("/crisp-webhook")
 async def handle_crisp_webhook(request: Request):
     body = await request.json()
-    event, data = body.get("event"), body.get("data", {})
-    message_from, session_id = data.get("from"), data.get("session_id")
+    print("[Webhook] Payload received")
 
+    event = body.get("event")
+    data = body.get("data", {})
+    message_from = data.get("from")
+    session_id = data.get("session_id")
+
+    # Handle early email capture
     if event in ["session:set_email", "website:visit"]:
         email = data.get("email") or data.get("visitor", {}).get("email")
         if session_id and email:
             session_emails[session_id] = email
-        return {"ok": True, "note": "Email captured"}
+            print(f"[Email Update] Session {session_id} → {email}")
+        return {"ok": True, "note": f"Email updated from {event}"}
 
     if event != "message:send" or message_from != "user":
         return {"ok": True, "note": "Ignored non-user message"}
 
     user_message = data.get("content", "")
-    user_email = session_emails.get(session_id, "unknown")
+    user_email = (
+        session_emails.get(session_id)
+        or data.get("website", {}).get("visitor", {}).get("email")
+        or data.get("visitor", {}).get("email")
+        or "unknown"
+    )
 
     if session_id and user_email != "unknown":
         session_emails[session_id] = user_email
@@ -155,9 +203,12 @@ async def handle_crisp_webhook(request: Request):
     if not session_id or not user_message:
         return {"ok": False, "error": "Missing session or message"}
 
+    print(f"[User] {user_message} (session: {session_id}, email: {user_email})")
+
     now = time()
     last_msg, last_time = last_user_message.get(session_id, ("", 0))
     if user_message == last_msg and (now - last_time) < DEDUPLICATION_TIMEOUT:
+        print("[Deduplication] Skipped")
         return {"ok": True, "note": "Duplicate ignored"}
     last_user_message[session_id] = (user_message, now)
 
@@ -169,24 +220,26 @@ async def handle_crisp_webhook(request: Request):
         return {"ok": True, "note": "Escalated to human"}
 
     if session_id in fallback_sessions:
-        if match_intent(user_message, "I want to talk to you"):
-            fallback_sessions.remove(session_id)
-            send_crisp_message(session_id, "Sure, I’m back! What would you like help with?")
-            return {"ok": True, "note": "Bot re-activated"}
+        print("[Fallback] Already escalated")
         return {"ok": True, "note": "Already escalated"}
 
-    if match_intent(user_message, "support") or match_intent(user_message, "contact"):
+    if match_intent(user_message, "support") or match_intent(user_message, "contact") or match_intent(user_message, "help"):
         awaiting_issue.add(session_id)
         send_crisp_message(session_id, "Can you please describe the issue you're facing?")
         return {"ok": True, "note": "Support intent detected"}
+
+    if match_intent(user_message, "talk to you") or match_intent(user_message, "want to talk to bot"):
+        fallback_sessions.discard(session_id)
+        send_crisp_message(session_id, "I’m back 😊 What would you like help with now?")
+        return {"ok": True, "note": "User returned to AI"}
 
     reply = get_ai_reply(user_message)
 
     if reply == "HUMAN_SUPPORT":
         awaiting_issue.add(session_id)
         send_crisp_message(session_id, "Can you please describe the issue you're facing?")
-        return {"ok": True, "note": "AI requested escalation"}
-    elif reply:
+        return {"ok": True, "note": "Asked for issue"}
+    elif reply and reply.strip():
         send_crisp_message(session_id, reply)
         return {"ok": True, "note": "Answered via AI"}
     else:
