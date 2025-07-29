@@ -147,12 +147,19 @@ async def handle_crisp_webhook(request: Request):
 
     session_id = data.get("session_id")
     user_message = data.get("content", "")
-    user_email = data.get("user", {}).get("email", "unknown")
+
+    # ✅ FIXED: Extract email correctly
+    user_email = (
+        data.get("website", {})
+        .get("visitor", {})
+        .get("email")
+        or "unknown"
+    )
 
     if not session_id or not user_message:
         return {"ok": False, "error": "Missing session or message"}
 
-    print(f"[User] {user_message} (session: {session_id})")
+    print(f"[User] {user_message} (session: {session_id}, email: {user_email})")
 
     # Deduplication
     now = time()
