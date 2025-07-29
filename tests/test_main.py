@@ -14,7 +14,7 @@ def test_chat_endpoint():
         "content": "Hi there!",
         "type": "text",
         "from_user": "chat",
-        "user_type": "client"
+        "user_type": "customer"
     }
     
     response = client.post("/chat", json=payload)
