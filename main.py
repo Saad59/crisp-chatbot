@@ -184,27 +184,37 @@ async def handle_crisp_webhook(request: Request):
     event = body.get("event")
     data = body.get("data", {})
     message_from = data.get("from")
+    session_id = data.get("session_id")
 
-    if event == "session:set_email":
-        session_id = data.get("session_id")
-        email = data.get("email")
+    # Handle early email capture from session or website info
+    if event in ["session:set_email", "website:visit"]:
+        email = data.get("email") or data.get("visitor", {}).get("email")
         if session_id and email:
             session_emails[session_id] = email
             print(f"[Email Update] Session {session_id} → {email}")
-        return {"ok": True, "note": "Email updated"}
+        return {"ok": True, "note": f"Email updated from {event}"}
 
     if event != "message:send" or message_from != "user":
         return {"ok": True, "note": "Ignored non-user message"}
 
-    session_id = data.get("session_id")
+    # Extract message + email fallback
     user_message = data.get("content", "")
-    user_email = session_emails.get(session_id) or data.get("website", {}).get("visitor", {}).get("email") or "unknown"
+    user_email = (
+        session_emails.get(session_id)
+        or data.get("website", {}).get("visitor", {}).get("email")
+        or data.get("visitor", {}).get("email")
+        or "unknown"
+    )
+
+    if session_id and user_email != "unknown":
+        session_emails[session_id] = user_email  # Cache it
 
     if not session_id or not user_message:
         return {"ok": False, "error": "Missing session or message"}
 
     print(f"[User] {user_message} (session: {session_id}, email: {user_email})")
 
+    # Deduplication
     now = time()
     last_msg, last_time = last_user_message.get(session_id, ("", 0))
     if user_message == last_msg and (now - last_time) < DEDUPLICATION_TIMEOUT:
@@ -223,7 +233,7 @@ async def handle_crisp_webhook(request: Request):
         print("[Fallback] Already escalated")
         return {"ok": True, "note": "Already escalated"}
 
-    # Fuzzy check for intent
+    # Intent detection
     if match_intent(user_message, "support") or match_intent(user_message, "contact"):
         awaiting_issue.add(session_id)
         send_crisp_message(session_id, "Can you please describe the issue you're facing?")
@@ -243,3 +253,4 @@ async def handle_crisp_webhook(request: Request):
         send_crisp_message(session_id, "Let me connect you to a support person 🔄")
         send_slack_alert(session_id, user_email, user_message)
         return {"ok": True, "note": "Fallback triggered"}
+
