@@ -7,6 +7,7 @@ from dotenv import load_dotenv
 from time import time
 from models import MsgPayload
 from database import msg_payloads_collection
+from rapidfuzz import fuzz
 
 load_dotenv()
 
@@ -45,32 +46,23 @@ PurifyX is a powerful lead generation ,Data Enrichment and outreach platform cur
 – Privacy Policy: https://www.purifyx.ai/privacy-policy
 """
 
-
 @app.get("/")
 def root() -> dict[str, str]:
     return {"message": "Welcome to Crisp Chatbot"}
 
-# About page route
 @app.get("/about")
 def about() -> dict[str, str]:
     return {"message": "This is the about page."}
 
-
-# Route to add a message
 @app.post("/messages/{msg_name}/")
 def add_msg(msg_name: str) -> dict[str, MsgPayload]:
-    # Generate an ID for the item based on the highest ID in the messages_list
     msg_id = max(messages_list.keys()) + 1 if messages_list else 0
     messages_list[msg_id] = MsgPayload(msg_id=msg_id, msg_name=msg_name)
-
     return {"message": messages_list[msg_id]}
 
-
-# Route to list all messages
 @app.get("/messages")
 def message_items() -> dict[str, dict[int, MsgPayload]]:
     return {"messages:": messages_list}
-
 
 @app.get("/mongo-status")
 def mongo_status():
@@ -80,31 +72,31 @@ def mongo_status():
     except Exception as e:
         return {"ok": False, "error": str(e)}
 
-
 @app.post("/chat")
 def chat(payload: MsgPayload):
-    # Convert payload to dict and save to MongoDB
     payload_dict = payload.dict()
     msg_payloads_collection.insert_one(payload_dict)
-    
-    return {
-        "reply": f"Received message: '{payload.content}' from {payload.user_type}"
-    }
+    return {"reply": f"Received message: '{payload.content}' from {payload.user_type}"}
 
 # Memory
 last_user_message = {}
 DEDUPLICATION_TIMEOUT = 10
 awaiting_issue = set()
 fallback_sessions = set()
+session_emails = {}
 
-# --- Gemini Integration ---
+# Intent matcher
+def match_intent(message: str, target: str) -> bool:
+    return fuzz.partial_ratio(message.lower(), target.lower()) > 85
+
+# Gemini
 def get_ai_reply(user_message: str):
     if not GEMINI_API_KEY:
         print("[GEMINI] API key missing.")
         return None
 
     url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={GEMINI_API_KEY}"
-    headers = { "Content-Type": "application/json" }
+    headers = {"Content-Type": "application/json"}
 
     prompt = {
         "contents": [
@@ -116,7 +108,7 @@ def get_ai_reply(user_message: str):
 Context:
 {PURIFYX_CONTEXT}
 
-If the user asks to speak with support or says anything like "contact support", "talk to human", or "need help", do not try to answer. Instead, just reply with: HUMAN_SUPPORT.
+If the user asks to speak with support or says anything like \"contact support\", \"talk to human\", or \"need help\", do not try to answer. Instead, just reply with: HUMAN_SUPPORT.
 
 Otherwise, help them with their question.
 
@@ -137,10 +129,10 @@ User: {user_message}
             print(f"[GEMINI] Error {response.status_code}: {response.text}")
     except Exception as e:
         print("[GEMINI] Request failed:", e)
-
     return None
 
-# --- Crisp Integration ---
+# Crisp
+
 def send_crisp_message(session_id: str, message: str):
     url = f"https://api.crisp.chat/v1/website/{CRISP_WEBSITE_ID}/conversation/{session_id}/message"
     auth_token = f"{CRISP_TOKEN_ID}:{CRISP_TOKEN_KEY}"
@@ -167,7 +159,8 @@ def send_crisp_message(session_id: str, message: str):
         print("[CRISP] Send error:", e)
         return False
 
-# --- Slack Integration ---
+# Slack
+
 def send_slack_alert(session_id: str, user_email: str, message: str):
     if not SLACK_WEBHOOK_URL:
         print("[SLACK] Webhook missing.")
@@ -181,7 +174,8 @@ def send_slack_alert(session_id: str, user_email: str, message: str):
     except Exception as e:
         print("[SLACK] Error:", e)
 
-# --- Webhook Handler ---
+# Crisp Webhook
+
 @app.post("/crisp-webhook")
 async def handle_crisp_webhook(request: Request):
     body = await request.json()
@@ -191,26 +185,26 @@ async def handle_crisp_webhook(request: Request):
     data = body.get("data", {})
     message_from = data.get("from")
 
+    if event == "session:set_email":
+        session_id = data.get("session_id")
+        email = data.get("email")
+        if session_id and email:
+            session_emails[session_id] = email
+            print(f"[Email Update] Session {session_id} → {email}")
+        return {"ok": True, "note": "Email updated"}
+
     if event != "message:send" or message_from != "user":
         return {"ok": True, "note": "Ignored non-user message"}
 
     session_id = data.get("session_id")
     user_message = data.get("content", "")
-
-    # ✅ FIXED: Extract email correctly
-    user_email = (
-        data.get("website", {})
-        .get("visitor", {})
-        .get("email")
-        or "unknown"
-    )
+    user_email = session_emails.get(session_id) or data.get("website", {}).get("visitor", {}).get("email") or "unknown"
 
     if not session_id or not user_message:
         return {"ok": False, "error": "Missing session or message"}
 
     print(f"[User] {user_message} (session: {session_id}, email: {user_email})")
 
-    # Deduplication
     now = time()
     last_msg, last_time = last_user_message.get(session_id, ("", 0))
     if user_message == last_msg and (now - last_time) < DEDUPLICATION_TIMEOUT:
@@ -218,7 +212,6 @@ async def handle_crisp_webhook(request: Request):
         return {"ok": True, "note": "Duplicate ignored"}
     last_user_message[session_id] = (user_message, now)
 
-    # Awaiting issue
     if session_id in awaiting_issue:
         awaiting_issue.remove(session_id)
         fallback_sessions.add(session_id)
@@ -226,12 +219,16 @@ async def handle_crisp_webhook(request: Request):
         send_slack_alert(session_id, user_email, user_message)
         return {"ok": True, "note": "Escalated to human"}
 
-    # Already escalated
     if session_id in fallback_sessions:
-        print("[Fallback] Session already escalated.")
+        print("[Fallback] Already escalated")
         return {"ok": True, "note": "Already escalated"}
 
-    # Try Gemini
+    # Fuzzy check for intent
+    if match_intent(user_message, "support") or match_intent(user_message, "contact"):
+        awaiting_issue.add(session_id)
+        send_crisp_message(session_id, "Can you please describe the issue you're facing?")
+        return {"ok": True, "note": "Support intent detected"}
+
     reply = get_ai_reply(user_message)
 
     if reply == "HUMAN_SUPPORT":
