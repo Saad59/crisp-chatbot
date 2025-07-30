@@ -3,14 +3,15 @@ from fastapi.middleware.cors import CORSMiddleware
 import requests
 import base64
 import os
-from dotenv import load_dotenv
-from datetime import datetime
 import re
+from dotenv import load_dotenv
+from time import time
+from models import MsgPayload
+from database import msg_payloads_collection
 
 load_dotenv()
 
 app = FastAPI()
-
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -19,18 +20,42 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 SLACK_WEBHOOK_URL = os.getenv("SLACK_WEBHOOK_URL")
 CRISP_WEBSITE_ID = os.getenv("CRISP_WEBSITE_ID")
 CRISP_TOKEN_ID = os.getenv("CRISP_TOKEN_ID")
 CRISP_TOKEN_KEY = os.getenv("CRISP_TOKEN_KEY")
 
+with open("purifyx_context.txt", "r", encoding="utf-8") as f:
+    PURIFYX_CONTEXT = f.read()
+
+@app.get("/")
+def root():
+    return {"message": "Welcome to Crisp Chatbot"}
+
+@app.post("/messages/{msg_name}/")
+def add_msg(msg_name: str):
+    return {"message": f"Added: {msg_name}"}
+
+@app.get("/messages")
+def message_items():
+    return {"messages": "List"}
+
+@app.post("/chat")
+def chat(payload: MsgPayload):
+    payload_dict = payload.dict()
+    msg_payloads_collection.insert_one(payload_dict)
+    return {"reply": f"Received message: '{payload.content}' from {payload.user_type}"}
+
 # In-memory session state
-session_state = {}  # session_id: {email: ..., issue: ...}
+session_state = {}  # session_id -> {'email': ..., 'issue': ...}
 
-EMAIL_REGEX = re.compile(r"[^@\s]+@[^@\s]+\.[^@\s]+")
+def is_valid_email(email: str):
+    return re.match(r"[^@]+@[^@]+\.[^@]+", email)
 
-def is_valid_email(email: str) -> bool:
-    return bool(EMAIL_REGEX.fullmatch(email.strip()))
+def extract_email(text: str):
+    match = re.search(r"[^@\s]+@[^@\s]+\.[^@\s]+", text)
+    return match.group() if match else None
 
 def send_crisp_message(session_id: str, message: str):
     url = f"https://api.crisp.chat/v1/website/{CRISP_WEBSITE_ID}/conversation/{session_id}/message"
@@ -51,19 +76,22 @@ def send_crisp_message(session_id: str, message: str):
     }
 
     try:
-        requests.post(url, headers=headers, json=payload)
+        res = requests.post(url, headers=headers, json=payload)
+        print(f"[CRISP] Sent: {res.status_code}")
+        return res.status_code == 200
     except Exception as e:
         print("[CRISP] Send error:", e)
+        return False
 
-def send_slack_alert(email: str, issue: str):
+def send_slack_alert(session_id: str, user_email: str, message: str):
     if not SLACK_WEBHOOK_URL:
         return
     try:
-        now = datetime.now().strftime("%d %B %Y, %-I:%M %p PKT")
         payload = {
-            "text": f"\ud83d\udce9 *New Support Request*\n\n\ud83d\udc64 Email: {email}\n\ud83d\udcac Issue: {issue}\n\n\u23f0 Received: {now}"
+            "text": f"\ud83d\udce9 *New Support Request*\n\n👤 Email: {user_email}\n💬 Issue: {message}\n🔗 Session ID: {session_id}"
         }
         requests.post(SLACK_WEBHOOK_URL, json=payload)
+        print("[SLACK] Alert sent.")
     except Exception as e:
         print("[SLACK] Error:", e)
 
@@ -73,42 +101,42 @@ async def handle_crisp_webhook(request: Request):
     event = body.get("event")
     data = body.get("data", {})
     session_id = data.get("session_id")
-    message_from = data.get("from")
+    message = data.get("content", "").strip()
 
-    if not session_id:
-        return {"ok": False, "error": "No session ID"}
+    if event != "message:send" or data.get("from") != "user":
+        return {"ok": True}
 
-    if event != "message:send" or message_from != "user":
-        return {"ok": True, "note": "Non-user message ignored"}
+    if not session_id or not message:
+        return {"ok": False, "error": "Missing session_id or message"}
 
-    user_msg = data.get("content", "").strip()
-    if not user_msg:
-        return {"ok": False, "error": "No message content"}
+    state = session_state.get(session_id, {"email": None, "issue": None})
 
-    state = session_state.setdefault(session_id, {"email": None, "issue": None})
-
-    # CASE A: email + issue in one
-    if is_valid_email(user_msg) and len(user_msg.split()) > 4:
-        state["email"] = user_msg
-        state["issue"] = user_msg
-    elif is_valid_email(user_msg):
-        state["email"] = user_msg
-    elif not state["issue"]:
-        state["issue"] = user_msg
-
-    # EVALUATION
-    if not state["email"] and not state["issue"]:
-        send_crisp_message(session_id, "Hi! 👋 I’m here to help you with any support issues.\n\nTo get started, could you please tell me:\n1. Your email address 📧\n2. A short message about your issue or question 📝")
+    # Step 1 - Extract email
+    email_candidate = extract_email(message)
+    if email_candidate and is_valid_email(email_candidate):
+        state["email"] = email_candidate
     elif not state["email"]:
-        send_crisp_message(session_id, "Thanks! Can you also share your email address so our support team can reach out to you?")
-    elif not is_valid_email(state["email"]):
-        state["email"] = None
-        send_crisp_message(session_id, "Hmm, that doesn't look like a valid email. Could you please check and send a valid email address?")
-    elif not state["issue"]:
-        send_crisp_message(session_id, "Thanks! Could you now describe the issue you’re facing so we can assist you?")
-    else:
-        send_slack_alert(state["email"], state["issue"])
-        send_crisp_message(session_id, f"Thanks! ✅\n\nYour message has been shared with our support team. They’ll reach out to you soon at: {state['email']}\n\nIf you have more details to add, feel free to reply anytime. 😊")
-        session_state.pop(session_id, None)  # Clean up
+        send_crisp_message(session_id, "Please share your email so we can assist you.")
+        session_state[session_id] = state
+        return {"ok": True}
 
-    return {"ok": True, "state": state}
+    # Step 2 - Extract issue (if not already set)
+    if not state["issue"] and not email_candidate:
+        state["issue"] = message
+        session_state[session_id] = state
+
+    # Step 3 - Escalate to Slack
+    if state["email"] and state["issue"]:
+        send_slack_alert(session_id, state["email"], state["issue"])
+        send_crisp_message(session_id, f"Thanks! ✅ Your message has been shared with our support team. They'll reach out to you soon at: {state['email']}")
+        session_state.pop(session_id, None)
+        return {"ok": True}
+
+    # Step 4 - Ask for missing info
+    if not state["email"]:
+        send_crisp_message(session_id, "Could you please share your email so our support team can reach out to you?")
+    elif not state["issue"]:
+        send_crisp_message(session_id, "Thanks! Now please describe the issue you're facing so we can help.")
+
+    session_state[session_id] = state
+    return {"ok": True}
