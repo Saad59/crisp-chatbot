@@ -1,4 +1,4 @@
-from fastapi import FastAPI, Request
+# from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 import requests
 import base64
@@ -28,9 +28,6 @@ CRISP_WEBSITE_ID = os.getenv("CRISP_WEBSITE_ID")
 CRISP_TOKEN_ID = os.getenv("CRISP_TOKEN_ID")
 CRISP_TOKEN_KEY = os.getenv("CRISP_TOKEN_KEY")
 
-with open("purifyx_context.txt", "r", encoding="utf-8") as f:
-    PURIFYX_CONTEXT = f.read()
-
 @app.get("/")
 def root():
     return {"message": "Welcome to Crisp Chatbot"}
@@ -51,58 +48,10 @@ def chat(payload: MsgPayload):
     msg_payloads_collection.insert_one(payload_dict)
     return {"reply": f"Received message: '{payload.content}' from {payload.user_type}"}
 
-# In-memory session state
-last_user_message = {}
-DEDUPLICATION_TIMEOUT = 10
-awaiting_issue = {}     # session_id -> True
-awaiting_email = {}     # session_id -> issue string
-session_emails = {}
-escalated_sessions = set()  # sessions already escalated to avoid fallback reuse
+# Session state
+session_email_collected = set()
+session_issue_collected = {}
 
-def match_intent(message: str, target: str) -> bool:
-    return fuzz.partial_ratio(message.lower(), target.lower()) > 85
-
-def is_greeting(message: str) -> bool:
-    greetings = ["hi", "hello", "hey", "hy", "yo", "sup"]
-    return any(fuzz.ratio(message.lower(), g) > 85 for g in greetings)
-
-def get_ai_reply(user_message: str):
-    if not GEMINI_API_KEY:
-        return None
-
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={GEMINI_API_KEY}"
-    headers = {"Content-Type": "application/json"}
-
-    prompt = {
-        "contents": [
-            {
-                "parts": [
-                    {
-                        "text": f"""You are an AI customer support assistant for PurifyX.
-
-Context:
-{PURIFYX_CONTEXT}
-
-If the user asks to speak with support or says anything like \"contact support\", \"talk to human\", or \"need help\", do not try to answer. Instead, just reply with: HUMAN_SUPPORT.
-
-User: {user_message}
-"""
-                    }
-                ]
-            }
-        ]
-    }
-
-    try:
-        response = requests.post(url, headers=headers, json=prompt)
-        if response.status_code == 200:
-            data = response.json()
-            return data["candidates"][0]["content"]["parts"][0]["text"].strip()
-        else:
-            print(f"[GEMINI] Error {response.status_code}: {response.text}")
-    except Exception as e:
-        print("[GEMINI] Request failed:", e)
-    return None
 
 def send_crisp_message(session_id: str, message: str):
     url = f"https://api.crisp.chat/v1/website/{CRISP_WEBSITE_ID}/conversation/{session_id}/message"
@@ -135,7 +84,7 @@ def send_slack_alert(session_id: str, user_email: str, message: str):
         return
     try:
         payload = {
-            "text": f"\ud83d\ude4b *Support Request*\nSession ID: `{session_id}`\nEmail: `{user_email}`\nIssue: {message}"
+            "text": f"\ud83d\ude4b *New Support Ticket*\nSession ID: `{session_id}`\nEmail: `{user_email}`\nIssue: {message}"
         }
         requests.post(SLACK_WEBHOOK_URL, json=payload)
         print("[SLACK] Alert sent.")
@@ -153,82 +102,37 @@ async def handle_crisp_webhook(request: Request):
     if event in ["session:set_email", "website:visit"]:
         email = data.get("email") or data.get("visitor", {}).get("email")
         if session_id and email:
-            session_emails[session_id] = email
+            session_email_collected.add(session_id)
         return {"ok": True, "note": f"Email updated from {event}"}
 
     if event != "message:send" or message_from != "user":
         return {"ok": True, "note": "Ignored non-user message"}
 
     user_message = data.get("content", "").strip()
-    user_email = (
-        session_emails.get(session_id)
-        or data.get("visitor", {}).get("email")
-        or "unknown"
-    )
+    user_email = data.get("visitor", {}).get("email") or "unknown"
 
     if not session_id or not user_message:
         return {"ok": False, "error": "Missing session or message"}
 
-    now = time()
-    last_msg, last_time = last_user_message.get(session_id, ("", 0))
-    if user_message == last_msg and (now - last_time) < DEDUPLICATION_TIMEOUT:
-        return {"ok": True, "note": "Duplicate ignored"}
-    last_user_message[session_id] = (user_message, now)
+    # Step 1: If we don’t have email
+    if user_email == "unknown" and session_id not in session_email_collected:
+        send_crisp_message(session_id, "Hi there 👋 Could you please share your email address so we can assist you?")
+        return {"ok": True, "note": "Requested email"}
 
-    if is_greeting(user_message):
-        send_crisp_message(session_id, "Hi there 👋 I’m your AI assistant at PurifyX. What can I help you with today?")
-        return {"ok": True}
+    # Step 2: If we don’t have issue
+    if session_id not in session_issue_collected:
+        session_issue_collected[session_id] = user_message
+        if user_email == "unknown":
+            send_crisp_message(session_id, "Thanks! Please also share your email address so we can create a support ticket.")
+        else:
+            send_slack_alert(session_id, user_email, user_message)
+            send_crisp_message(session_id, "Thanks! Your request has been sent to our support team. They'll contact you soon 🔄")
+        return {"ok": True, "note": "Issue captured"}
 
-    if match_intent(user_message, "talk to you"):
-        awaiting_issue.pop(session_id, None)
-        awaiting_email.pop(session_id, None)
-        escalated_sessions.discard(session_id)
-        send_crisp_message(session_id, "I’m back 😊 What would you like help with now?")
-        return {"ok": True}
+    # Step 3: If we already got email + issue, ignore further fallback
+    if session_id in session_email_collected and session_id in session_issue_collected:
+        return {"ok": True, "note": "Ticket already created"}
 
-    if session_id in escalated_sessions:
-        return {"ok": True, "note": "Escalation complete, skipping fallback"}
-
-    if session_id in awaiting_issue:
-        # Already awaiting issue, treat current message as the issue
-        issue_text = user_message.strip()
-        if issue_text:
-            awaiting_issue.pop(session_id, None)
-            awaiting_email[session_id] = issue_text
-            if user_email == "unknown":
-                send_crisp_message(session_id, "Thanks for the details. Could you please share your email so our support team can reach you?")
-                return {"ok": True, "note": "Awaiting email"}
-            else:
-                issue = awaiting_email.pop(session_id)
-                send_slack_alert(session_id, user_email, issue)
-                escalated_sessions.add(session_id)
-                send_crisp_message(session_id, "Thanks! I’ve alerted our support team. They’ll reach out to you shortly 🔄")
-                return {"ok": True, "note": "Escalated with issue"}
-
-    if session_id in awaiting_email and user_email != "unknown":
-        issue = awaiting_email.pop(session_id)
-        send_slack_alert(session_id, user_email, issue)
-        escalated_sessions.add(session_id)
-        send_crisp_message(session_id, "Thanks! I’ve alerted our support team. They’ll reach out to you shortly 🔄")
-        return {"ok": True, "note": "Escalated with email"}
-
-    if match_intent(user_message, "support") or match_intent(user_message, "contact") or match_intent(user_message, "human") or "credits" in user_message.lower():
-        if session_id not in awaiting_issue and session_id not in awaiting_email:
-            awaiting_issue[session_id] = True
-            send_crisp_message(session_id, "Got it! Could you please explain the issue you're facing?")
-            return {"ok": True, "note": "Asked for issue"}
-
-    reply = get_ai_reply(user_message)
-    if reply == "HUMAN_SUPPORT":
-        if session_id not in awaiting_issue and session_id not in awaiting_email:
-            awaiting_issue[session_id] = True
-            send_crisp_message(session_id, "Sure. Could you please describe your issue?")
-            return {"ok": True, "note": "AI fallback to human"}
-    elif reply:
-        send_crisp_message(session_id, reply)
-        return {"ok": True, "note": "AI answered"}
-    else:
-        if session_id not in awaiting_issue:
-            awaiting_issue[session_id] = True
-            send_crisp_message(session_id, "I couldn’t quite get that. Could you please describe the issue you're facing?")
-        return {"ok": True, "note": "Fallback AI prompt"}
+    # Final fallback (very rare)
+    send_crisp_message(session_id, "Can you please briefly describe the issue you're facing?")
+    return {"ok": True, "note": "Fallback asked for issue"}
