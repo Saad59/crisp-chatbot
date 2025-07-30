@@ -1,0 +1,117 @@
+✅ 1. PurifyX Feature List (In Simple Words)
+PurifyX is an all-in-one platform that helps you find leads, enrich their data, and soon, reach out to them automatically. Here's what it does:
+
+🔍 Lead Generation
+Smart Lead Search: Find potential customers by filtering things like job title, industry, company size, location, and more.
+
+Company Data: Get company details like how many people work there, what tools they use, their revenue, and funding info.
+
+LinkedIn Extension (Coming Soon): Use a Chrome plugin to pull leads from LinkedIn and enrich their data inside PurifyX.
+
+⚡ Smart Data Enrichment
+Waterfall Enrichment (Coming Soon): If one data provider doesn’t return info, PurifyX will try another one automatically — until it finds the best result.
+
+Only Pay on Success (Coming Soon): You’ll only be charged when PurifyX finds valid data, like a working email or phone number.
+
+Field-Level Control (Coming Soon): Choose which parts of a lead you want to enrich — like email only, or both phone and LinkedIn.
+
+Cost Tracking (Coming Soon): See which data providers are working best and how much they cost per result.
+
+✉️ Email Outreach (Coming Soon)
+AI-Powered Sequences: PurifyX will help you send cold emails automatically, using smart templates based on what’s happening with the lead (like a job change or funding round).
+
+Inbox Rotation: To stay out of spam, emails will be sent from multiple inboxes, not just one.
+
+Future Setup Help: You won’t need to worry about setting up technical email stuff like SPF, DKIM, or forwarding. We’ll help automate that when outreach launches.
+
+🛠️ Integrations & Exports
+Export Leads to CSV: Download your leads anytime in spreadsheet format.
+
+Webhook Support (Coming Soon): Automatically send leads to other tools you use, like CRMs or databases.
+
+CRM Integrations (Coming Soon): Connect with tools like HubSpot, Salesforce, and others to send leads directly there.
+
+📊 Analytics & Workspaces
+Performance Tracking (Coming Soon): See how well your enrichment is working, and which providers give the best data.
+
+Team Workspaces (Coming Soon): Use separate workspaces for different teams, clients, or projects — with different leads and users in each.
+
+❓ 2. Help Center / FAQs for PurifyX
+Q: What is PurifyX?
+A: PurifyX is a platform that helps you find leads, enrich their contact details using AI and external tools, and (soon) send them personalized emails — all from one place.
+
+Q: Do I need technical skills to use it?
+A: Not at all! PurifyX is made to be easy for sales, marketing, and outreach teams. You can search, enrich, and export leads without writing code.
+
+Q: Will I be charged if no data is found?
+A: No. You’ll only be charged if the data enrichment is successful — for example, if we return a working email or LinkedIn profile.
+
+Q: Can I export my leads?
+A: Yes! You can export them as a CSV file or send them automatically to your tools via webhooks (coming soon).
+
+Q: Can I use my own enrichment providers?
+A: Yes, in the upcoming version you’ll be able to plug in APIs from vendors you already work with, and prioritize them in the waterfall.
+
+Q: Can I manage different teams or clients separately?
+A: Soon, you’ll be able to create separate workspaces, where each team/client has their own leads, rules, and users.
+
+💡 3. Marketing Description for Landing Page or Pitch
+PurifyX helps you find and enrich high-quality leads faster than ever — using smart filters, AI enrichment, and an upcoming outreach automation system.
+
+Whether you’re a sales team, agency, or solo founder, PurifyX gives you everything you need to build lead lists, enrich them with accurate data, and prepare for outreach — without jumping between 5 different tools.
+
+Say goodbye to manual prospecting. Say hello to verified, enriched, and ready-to-contact leads — in one click.
+
+🤔 4. Common User Questions or Concerns
+Category	Question	Answer
+Account & Access	How do I sign up for PurifyX?	You can sign up easily using your email on our website. No technical setup needed.
+Can I invite my team to collaborate?	Yes, PurifyX allows you to add team members to your workspace for shared access and campaigns.
+How do I reset my password?	Just click on "Forgot Password" on the login screen to reset it instantly.
+Can I manage multiple workspaces or clients?	Yes, each workspace can be isolated for different clients or teams.
+How do I change my email or account settings?	You can update your profile and account settings from the dashboard under your user menu.
+Lead Generation	Where does PurifyX get its lead data from?	We use trusted data vendors, public sources, and allow you to plug in your own enrichment APIs.
+Is the lead data verified or real-time?	Yes, we verify every field through waterfall enrichment and charge only if data is found.
+Can I use my own data vendors or APIs?	Yes, PurifyX allows you to plug in third-party enrichment APIs in your flow.
+How does the waterfall enrichment work?	If one vendor fails, the next is tried until successful. You only pay if a value is returned.
+Do I pay if no data is found?	No, we only charge on successful enrichment results.
+Chrome Extension	How does the LinkedIn Chrome extension work?	You can extract leads directly from LinkedIn or Sales Navigator with one click using our extension.
+Is it safe to use with my LinkedIn account?	Yes, we follow best practices and rate limits to ensure safe use.
+Can I export leads from LinkedIn to PurifyX?	Yes, the extension allows direct syncing of leads into your PurifyX dashboard.
+Does it work on Sales Navigator?	Absolutely, it fully supports Sales Navigator.
+Outreach & Campaigns	Can I send outreach emails directly from PurifyX?	Yes, you can create and send email sequences from within PurifyX.
+Does it support personalization?	Yes, dynamic personalization and AI-driven content are supported.
+Is there a daily sending limit?	Sending limits depend on your connected email provider (e.g., Gmail, Outlook). PurifyX respects those limits.
+Can I connect my own email account?	Yes, you can connect Gmail, Outlook, and SMTP/IMAP accounts.
+How do I manage replies and follow-ups?	Replies are tracked, and follow-ups are paused automatically. You can also view and manage replies in your inbox.
+Pricing & Billing	Do you offer a free trial?	Yes, we offer a free trial so you can explore all core features.
+What’s included in each plan?	Each plan includes lead credits, enrichment, outreach, and workspace features. See our pricing page for full details.
+Can I cancel my subscription anytime?	Yes, you can cancel anytime from your billing settings.
+Are there any hidden costs?	No, you’re only charged for successful enrichments or paid features you use.
+How is billing handled for enrichment?	You’re only charged when data is successfully enriched—nothing for failed lookups.
+Reporting & Analytics	Can I see which vendors perform best?	Yes, you can view enrichment success rates per vendor.
+How can I track campaign performance?	Analytics dashboards show open rates, click rates, replies, and bounce data.
+Do you provide reporting per workspace?	Yes, each workspace has separate analytics and logs.
+Integrations & API	Can I integrate PurifyX with my CRM?	Yes, integrations with CRMs like HubSpot and Pipedrive are supported.
+Is there an API for exporting leads?	Yes, you can use our REST API to export data or trigger enrichments.
+Can I set up real-time sync with webhooks?	Yes, webhooks allow you to sync data instantly with other tools.
+AI & Personalization	How does AI personalize content?	Our AI analyzes lead data to generate personalized email copy and subject lines.
+Can I create rules or triggers?	Yes, you can build custom triggers based on job changes, funding rounds, or other conditions.
+What kinds of data triggers are supported?	Triggers like job title change, new funding, team hiring, etc. are supported.
+Compliance & Security	Is PurifyX GDPR-compliant?	Yes, we comply with GDPR and other privacy standards.
+How do you handle personal data?	Data is securely stored and used only for your campaigns. You can request deletion at any time.
+Can I request data export or deletion?	Yes, you can request a full data export or deletion from your account settings or support.
+Is the Chrome extension private?	Yes, it only works when you initiate extraction. No background tracking.
+General Concerns	What happens if a vendor API fails?	PurifyX automatically retries with the next vendor in your waterfall.
+Do I need technical knowledge to use PurifyX?	No, it's designed for sales and marketing users with no coding skills required.
+Can you help onboard my team?	Yes, we offer onboarding support via chat, video, or help center.
+Is there support available if I get stuck?	Yes, our team is available via live chat and email. You can also browse our help center articles anytime.
+
+📘 5. Common Terminology & Acronyms (Explained Simply)
+Term	What It Means
+Enrichment	Filling in missing info about a lead — like getting their email, phone, job title, or LinkedIn profile.
+Waterfall Enrichment	Trying multiple data sources in a specific order until one returns a successful result.
+Pay-on-Success	You’re only charged when valid, accurate data is found (not for failed lookups).
+Webhook	A way to send lead data from PurifyX to other tools automatically.
+Workspace	A separate area inside PurifyX for each team or client, so their data stays private.
+CRM	Customer Relationship Management tool — like HubSpot or Salesforce, used to manage sales leads.
+CSV	A file format you can use to export leads into Excel or Google Sheets
